@@ -1,4 +1,4 @@
-mcp
+mcp>=1.27,<2
 fastapi
 uvicorn
 python-dotenv
