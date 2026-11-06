@@ -34,6 +34,16 @@
                     .filters-bar{display:flex;gap:15px;margin-bottom:20px;flex-wrap:wrap;align-items:center}
                     .filters-bar select{padding:6px 12px;border-radius:4px;border:1px solid #ccc;min-width:180px}
                     .filters-bar label{font-weight:600;margin-right:5px}
+                    .filters-bar .toggle-label{display:inline-flex;align-items:center;gap:6px;cursor:pointer;margin-right:0}
+                    .filters-bar .toggle-label input{cursor:pointer}
+                    .priority-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+                    .priority-checks{display:flex;flex-wrap:wrap;gap:6px}
+                    .pr-chk{display:inline-flex;align-items:center;gap:5px;background:#fff;border:1px solid #ccc;border-radius:16px;padding:4px 11px;cursor:pointer;font-size:12px;font-weight:600;color:#444;user-select:none}
+                    .pr-chk:hover{background:#f3f3f3}
+                    .pr-chk.checked{background:#e8f0fb;border-color:#5b9bd5;color:#2c5f96}
+                    .pr-chk input{cursor:pointer}
+                    .pr-actions{font-size:12px;font-weight:600}
+                    .pr-actions a{color:#5b9bd5;cursor:pointer;text-decoration:underline;margin-left:8px}
                     .roadmap-container{position:relative;overflow-x:auto;margin-bottom:30px;border:1px solid #e0e0e0;border-radius:8px;padding:20px;background:#fafafa}
                     .timeline-header{display:flex;border-bottom:2px solid #ccc;padding-bottom:8px;margin-bottom:10px;position:sticky;top:0;background:#fafafa;z-index:2}
                     .timeline-label{width:280px;font-weight:700;flex-shrink:0}
@@ -43,10 +53,12 @@
                     .plan-bar-container{flex:1;position:relative;height:28px}
                     .plan-bar{position:absolute;height:24px;border-radius:4px;cursor:pointer;display:flex;align-items:center;padding:0 8px;font-size:11px;color:#fff;font-weight:500;transition:opacity 0.2s,transform 0.1s;top:2px}
                     .plan-bar:hover{opacity:0.85;transform:scaleY(1.1)}
+                    .plan-bar.status-backlog{background:#8E9BAE}
                     .plan-bar.status-idea{background:#5b9bd5}
                     .plan-bar.status-discovery{background:#ed7d31}
                     .plan-bar.status-governance{background:#9b59b6}
-                    .plan-bar.status-delivery{background:#70ad47}
+                    .plan-bar.status-inprogress{background:#70ad47}
+                    .plan-bar.status-done{background:#2E7D32}
                     .plan-bar.status-default{background:#bdc3c7}
                     .detail-panel{position:fixed;top:0;right:-500px;width:480px;height:100vh;background:#fff;box-shadow:-4px 0 20px rgba(0,0,0,0.15);z-index:1000;transition:right 0.3s ease;overflow-y:auto;padding:30px}
                     .detail-panel.open{right:0}
@@ -83,7 +95,33 @@
                     var techCapabilities = [];
                     var planPerfMeasures = [<xsl:for-each select="$allStrategicPlans"><xsl:variable name="thisPlanPerfMeasures" select="$planPerfMeasureInstances[name=current()/own_slot_value[slot_reference='performance_measures']/value]"/><xsl:if test="$thisPlanPerfMeasures">{"id":"<xsl:value-of select="eas:getSafeJSString(current()/name)"/>","measures":[<xsl:for-each select="$thisPlanPerfMeasures"><xsl:variable name="thisCat" select="$planPerfCategories[name=current()/own_slot_value[slot_reference='pm_category']/value]"/><xsl:variable name="thisSQV" select="$planSQValues[name=current()/own_slot_value[slot_reference='pm_performance_value']/value][1]"/>{"category":"<xsl:value-of select="eas:getSafeJSString(string($thisCat[1]/own_slot_value[slot_reference='name']/value))"/>","value":"<xsl:value-of select="eas:getSafeJSString(string($thisSQV/own_slot_value[slot_reference='name']/value))"/>","score":"<xsl:value-of select="$thisSQV/own_slot_value[slot_reference='service_quality_value_score']/value"/>"}<xsl:if test="not(position()=last())">,</xsl:if></xsl:for-each>]}<xsl:if test="not(position()=last())">,</xsl:if></xsl:if></xsl:for-each>];
                     var selectedRoadmapFilter = 'all';
-                    var selectedPriorityFilter = 'all';
+                    // Multi-select priorities (additive). Default: all ticked. Empty set = show none.
+                    var selectedPriorities = {};
+                    var excludeBacklog = false;
+
+                    // ---- Strategic plan status config (new DB values) ----
+                    // Matches are prefix-tolerant: any leading "N. " is stripped before comparing.
+                    // key -> used for CSS class (status-KEY) and summary counters.
+                    var STATUS_DEFS = [
+                        { key:'backlog',    label:'Backlog',     colour:'#8E9BAE' },
+                        { key:'idea',       label:'Roadmap Idea', colour:'#5b9bd5', match:['roadmap idea'] },
+                        { key:'discovery',  label:'Discovery',   colour:'#ed7d31' },
+                        { key:'governance', label:'Governance',  colour:'#9b59b6' },
+                        { key:'inprogress', label:'In Progress', colour:'#70ad47', match:['in progress'] },
+                        { key:'done',       label:'Done',        colour:'#2E7D32' }
+                    ];
+                    function normStatus(s){ return (s || '').replace(/^\s*\d+\.\s*/, '').trim().toLowerCase(); }
+                    function statusDef(s){
+                        var n = normStatus(s);
+                        for (var i = 0; i &lt; STATUS_DEFS.length; i++) {
+                            var d = STATUS_DEFS[i];
+                            var names = d.match || [d.label.toLowerCase()];
+                            if (names.indexOf(n) !== -1) return d;
+                        }
+                        return null;
+                    }
+                    function statusKey(s){ var d = statusDef(s); return d ? d.key : 'default'; }
+                    function isBacklog(p){ return statusKey(p.planStatus) === 'backlog'; }
 
                     $(document).ready(function() {
                         var apiList = ['planDataAPI', 'ImpTechCapApi'];
@@ -117,8 +155,6 @@
                             opt.textContent = rm.name;
                             roadmapSelect.appendChild(opt);
                         });
-                        var prioritySelect = document.getElementById('filterPriority');
-                        prioritySelect.innerHTML = '&lt;option value="all"&gt;All Priorities&lt;/option&gt;';
                         // Build priority options from planPerfMeasures - get unique values where category = Priority
                         var priorities = new Map();
                         planPerfMeasures.forEach(function(planPerf) {
@@ -145,20 +181,50 @@
                         });
                         // Sort by order (Non-Negotiable=0, P1=1, P2=2... P8=8)
                         var sortedPriorities = Array.from(priorities.entries()).sort(function(a, b) { return a[1] - b[1]; });
+                        // Render additive priority checkboxes, all ticked by default
+                        selectedPriorities = {};
+                        var prWrap = document.getElementById('priorityChecks');
+                        var prHtml = '';
                         sortedPriorities.forEach(function(entry) {
-                            var opt = document.createElement('option');
-                            opt.value = entry[0];
-                            opt.textContent = entry[0];
-                            prioritySelect.appendChild(opt);
+                            var val = entry[0];
+                            selectedPriorities[val] = true;
+                            var safe = String(val).replace(/&amp;/g,'&amp;amp;').replace(/&lt;/g,'&amp;lt;').replace(/&gt;/g,'&amp;gt;').replace(/"/g,'&amp;quot;');
+                            prHtml += '&lt;label class="pr-chk checked" data-priority="' + safe + '"&gt;'
+                                + '&lt;input type="checkbox" value="' + safe + '" checked="checked" onchange="onPriorityToggle(this)"/&gt;'
+                                + safe + '&lt;/label&gt;';
                         });
+                        prWrap.innerHTML = prHtml || '&lt;span style="color:#999;font-size:12px;"&gt;No priorities found&lt;/span&gt;';
+
                         roadmapSelect.addEventListener('change', function() {
                             selectedRoadmapFilter = this.value;
                             renderView();
                         });
-                        prioritySelect.addEventListener('change', function() {
-                            selectedPriorityFilter = this.value;
-                            renderView();
-                        });
+                        var exBacklog = document.getElementById('excludeBacklog');
+                        if (exBacklog) {
+                            exBacklog.addEventListener('change', function() {
+                                excludeBacklog = this.checked;
+                                renderView();
+                            });
+                        }
+                    }
+
+                    function priorityCount() { return document.querySelectorAll('#priorityChecks input[type=checkbox]').length; }
+                    function onPriorityToggle(cb) {
+                        if (cb.checked) { selectedPriorities[cb.value] = true; }
+                        else { delete selectedPriorities[cb.value]; }
+                        if (cb.parentNode) cb.parentNode.classList.toggle('checked', cb.checked);
+                        renderView();
+                    }
+                    function priorityAll() {
+                        var boxes = document.querySelectorAll('#priorityChecks input[type=checkbox]');
+                        boxes.forEach(function(b){ b.checked = true; selectedPriorities[b.value] = true; b.parentNode.classList.add('checked'); });
+                        renderView();
+                    }
+                    function priorityNone() {
+                        selectedPriorities = {};
+                        var boxes = document.querySelectorAll('#priorityChecks input[type=checkbox]');
+                        boxes.forEach(function(b){ b.checked = false; b.parentNode.classList.remove('checked'); });
+                        renderView();
                     }
 
                     function getPlansForRoadmap(roadmapId) {
@@ -175,10 +241,17 @@
                                 return planIdsInRoadmap.indexOf(plan.id) !== -1;
                             });
                         }
-                        if (selectedPriorityFilter !== 'all') {
-                            filtered = filtered.filter(function(plan) {
-                                return getPlanPriority(plan.id) === selectedPriorityFilter;
-                            });
+                        // Priority: additive checkboxes. A plan shows if its priority is ticked.
+                        // Plans with no priority show only when all priorities are ticked (the default "show everything").
+                        var chosen = Object.keys(selectedPriorities);
+                        var allTicked = (chosen.length === priorityCount());
+                        filtered = filtered.filter(function(plan) {
+                            var pr = getPlanPriority(plan.id);
+                            if (!pr) return allTicked;
+                            return selectedPriorities[pr] === true;
+                        });
+                        if (excludeBacklog) {
+                            filtered = filtered.filter(function(plan) { return !isBacklog(plan); });
                         }
                         return filtered;
                     }
@@ -282,19 +355,11 @@
                                 if (leftPct &lt; 0) leftPct = 0;
                                 if (widthPct &lt; 2) widthPct = 2;
                                 if (leftPct + widthPct &gt; 100) widthPct = 100 - leftPct;
-                                var statusClass = 'status-default';
-                                if (plan.planStatus) {
-                                    var s = plan.planStatus.toLowerCase();
-                                    if (s === '1. roadmap idea') statusClass = 'status-idea';
-                                    else if (s === '0. roadmap idea (unplanned)') statusClass = 'status-idea';
-                                    else if (s === '2. discovery') statusClass = 'status-discovery';
-                                    else if (s === '3. governance') statusClass = 'status-governance';
-                                    else if (s === '4. delivery') statusClass = 'status-delivery';
-                                }
+                                var statusClass = 'status-' + statusKey(plan.planStatus);
                                 html += '&lt;div class="plan-row"&gt;';
                                 html += '&lt;div class="plan-name" title="' + plan.name + '" onclick="showPlanDetail(\'' + plan.id + '\')" style="cursor:pointer;color:#5b9bd5;"&gt;' + plan.name + '&lt;/div&gt;';
                                 html += '&lt;div class="plan-bar-container"&gt;';
-                                if (plan.planStatus === '0. Roadmap Idea (Unplanned)') {
+                                if (!plan.validStartDate) {
                                     html += '&lt;span style="font-size:11px;color:#999;font-style:italic;line-height:28px;"&gt;No current start date&lt;/span&gt;';
                                 } else {
                                     html += '&lt;div class="plan-bar ' + statusClass + '" style="left:' + leftPct + '%;width:' + widthPct + '%;" onclick="showPlanDetail(\'' + plan.id + '\')" title="' + plan.name + ' (' + (plan.planStatus || '') + ')"&gt;';
@@ -308,16 +373,11 @@
                     }
 
                     function updateSummary(plans) {
-                        var totalPlans = plans.length;
-                        var ideaPlans = plans.filter(function(p) { return p.planStatus === '1. Roadmap Idea'; }).length;
-                        var discoveryPlans = plans.filter(function(p) { return p.planStatus === '2. Discovery'; }).length;
-                        var governancePlans = plans.filter(function(p) { return p.planStatus === '3. Governance'; }).length;
-                        var deliveryPlans = plans.filter(function(p) { return p.planStatus === '4. Delivery'; }).length;
-                        document.getElementById('summaryTotal').textContent = totalPlans;
-                        document.getElementById('summaryIdea').textContent = ideaPlans;
-                        document.getElementById('summaryDiscovery').textContent = discoveryPlans;
-                        document.getElementById('summaryGovernance').textContent = governancePlans;
-                        document.getElementById('summaryDelivery').textContent = deliveryPlans;
+                        document.getElementById('summaryTotal').textContent = plans.length;
+                        STATUS_DEFS.forEach(function(d) {
+                            var el = document.getElementById('summary-' + d.key);
+                            if (el) el.textContent = plans.filter(function(p) { return statusKey(p.planStatus) === d.key; }).length;
+                        });
                     }
 
                     function showPlanDetail(planId) {
@@ -417,20 +477,29 @@
                     <p style="color:#666;margin-bottom:20px;">Explore strategic plans on a timeline, filter by roadmap and priority, and drill into plan details including technology capability dependencies.</p>
                     <div class="summary-cards">
                         <div class="summary-card"><div class="count" id="summaryTotal">0</div><div class="label">Total Plans</div></div>
-                        <div class="summary-card"><div class="count" id="summaryIdea" style="color:#5b9bd5;">0</div><div class="label">Roadmap Idea</div></div>
-                        <div class="summary-card"><div class="count" id="summaryDiscovery" style="color:#ed7d31;">0</div><div class="label">Discovery</div></div>
-                        <div class="summary-card"><div class="count" id="summaryGovernance" style="color:#9b59b6;">0</div><div class="label">Governance</div></div>
-                        <div class="summary-card"><div class="count" id="summaryDelivery" style="color:#70ad47;">0</div><div class="label">Delivery</div></div>
+                        <div class="summary-card"><div class="count" id="summary-backlog" style="color:#8E9BAE;">0</div><div class="label">Backlog</div></div>
+                        <div class="summary-card"><div class="count" id="summary-idea" style="color:#5b9bd5;">0</div><div class="label">Roadmap Idea</div></div>
+                        <div class="summary-card"><div class="count" id="summary-discovery" style="color:#ed7d31;">0</div><div class="label">Discovery</div></div>
+                        <div class="summary-card"><div class="count" id="summary-governance" style="color:#9b59b6;">0</div><div class="label">Governance</div></div>
+                        <div class="summary-card"><div class="count" id="summary-inprogress" style="color:#70ad47;">0</div><div class="label">In Progress</div></div>
+                        <div class="summary-card"><div class="count" id="summary-done" style="color:#2E7D32;">0</div><div class="label">Done</div></div>
                     </div>
                     <div class="filters-bar">
                         <div><label for="filterRoadmap">Roadmap:</label><select id="filterRoadmap"><option value="all">All Roadmaps</option></select></div>
-                        <div><label for="filterPriority">Priority:</label><select id="filterPriority"><option value="all">All Priorities</option></select></div>
+                        <div class="priority-group">
+                            <label>Priority:</label>
+                            <div class="priority-checks" id="priorityChecks"></div>
+                            <span class="pr-actions"><a onclick="priorityAll()">All</a><a onclick="priorityNone()">None</a></span>
+                        </div>
+                        <div><label class="toggle-label"><input type="checkbox" id="excludeBacklog"/><xsl:text> </xsl:text>Exclude Backlog</label></div>
                     </div>
                     <div class="legend">
-                        <div class="legend-item"><div class="legend-swatch" style="background:#5b9bd5;"/><xsl:text> </xsl:text>1. Roadmap Idea</div>
-                        <div class="legend-item"><div class="legend-swatch" style="background:#ed7d31;"/><xsl:text> </xsl:text>2. Discovery</div>
-                        <div class="legend-item"><div class="legend-swatch" style="background:#9b59b6;"/><xsl:text> </xsl:text>3. Governance</div>
-                        <div class="legend-item"><div class="legend-swatch" style="background:#70ad47;"/><xsl:text> </xsl:text>4. Delivery</div>
+                        <div class="legend-item"><div class="legend-swatch" style="background:#8E9BAE;"/><xsl:text> </xsl:text>Backlog</div>
+                        <div class="legend-item"><div class="legend-swatch" style="background:#5b9bd5;"/><xsl:text> </xsl:text>Roadmap Idea</div>
+                        <div class="legend-item"><div class="legend-swatch" style="background:#ed7d31;"/><xsl:text> </xsl:text>Discovery</div>
+                        <div class="legend-item"><div class="legend-swatch" style="background:#9b59b6;"/><xsl:text> </xsl:text>Governance</div>
+                        <div class="legend-item"><div class="legend-swatch" style="background:#70ad47;"/><xsl:text> </xsl:text>In Progress</div>
+                        <div class="legend-item"><div class="legend-swatch" style="background:#2E7D32;"/><xsl:text> </xsl:text>Done</div>
                         <div class="legend-item"><div class="legend-swatch" style="background:#bdc3c7;"/><xsl:text> </xsl:text>Not Set</div>
                     </div>
                     <div class="roadmap-container" id="mainContent">
