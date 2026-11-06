@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "essential-view-builder": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "--name", "essential-view-builder-mcp", "eas/essential-view-builder-mcp:v1"],
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}
